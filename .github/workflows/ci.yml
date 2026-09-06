@@ -75,9 +75,6 @@ jobs:
         run: |
           pip install -r requirements.train.txt
           python -m src.train
-        run: |
-          pip install -r requirements.train.txt
-          python -m src.train
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
