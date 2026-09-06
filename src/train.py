@@ -7,9 +7,11 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 
-MLFLOW_TRACKING_URI = "./mlruns"
+from src.feature_encoding import BINARY, FEATURE_ENCODINGS
+
+MLFLOW_TRACKING_URI = "sqlite:///mlflow.db"
 EXPERIMENT_NAME = "churnguard"
 MODEL_DIR = "models"
 DATA_URL = (
@@ -25,27 +27,15 @@ def load_and_preprocess(url: str):
     df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
     df.dropna(inplace=True)
 
-    binary_cols = ["Partner", "Dependents", "PhoneService", "PaperlessBilling", "Churn"]
-    for col in binary_cols:
-        df[col] = (df[col] == "Yes").astype(int)
+    category_encodings = {**FEATURE_ENCODINGS, "Churn": BINARY}
 
-    df["gender"] = (df["gender"] == "Male").astype(int)
+    for column, mapping in category_encodings.items():
+        unknown_values = set(df[column].dropna().unique()) - set(mapping)
 
-    multi_cols = [
-        "MultipleLines",
-        "InternetService",
-        "OnlineSecurity",
-        "OnlineBackup",
-        "DeviceProtection",
-        "TechSupport",
-        "StreamingTV",
-        "StreamingMovies",
-        "Contract",
-        "PaymentMethod",
-    ]
-    le = LabelEncoder()
-    for col in multi_cols:
-        df[col] = le.fit_transform(df[col])
+        if unknown_values:
+            raise ValueError(f"Unknown categories in {column}: {sorted(unknown_values)}")
+
+        df[column] = df[column].map(mapping)
 
     return df
 

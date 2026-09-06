@@ -38,7 +38,7 @@ A complete, production-style machine learning project that teaches you how to ta
                   │                                                       │
                   │  train.py ──► models/ ──► api.py ──► tests/          │
                   │     │                                                 │
-                  │     └──► mlruns/  (MLflow local tracking)            │
+                  │     └──► mlflow.db (MLflow SQLite tracking)            │
                   └──────────────────────────────────────────────────────┘
                                         │
                                   git push main
@@ -67,7 +67,6 @@ A complete, production-style machine learning project that teaches you how to ta
 ```
 
 ---
-
 ## 2. Prerequisites
 
 | Tool | Minimum version | Purpose |
@@ -80,35 +79,50 @@ A complete, production-style machine learning project that teaches you how to ta
 Install the Python dependencies for local development:
 
 ```bash
-pip install -r requirements.api.txt
-pip install pytest httpx streamlit plotly requests mlflow
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.train.txt
+python -m pip install -r requirements.streamlit.txt
+python -m pip install pytest httpx
 ```
 
 ---
 
 ## 3. Project structure
 
-```
-churn_project/
+```text
+churnguard/
 ├── src/
-│   ├── train.py            # Data preprocessing, model training, artifact export
-│   ├── api.py              # FastAPI prediction service with Prometheus metrics
-│   └── streamlit_app.py    # Interactive web UI
+│   ├── __init__.py
+│   ├── feature_encoding.py    # Shared categorical encodings
+│   ├── train.py               # Preprocessing, training, and artifact export
+│   ├── api.py                 # FastAPI service with Prometheus metrics
+│   └── streamlit_app.py       # Interactive prediction UI
 ├── tests/
-│   └── test_api.py         # pytest test suite (18 tests)
+│   ├── test_api.py
+│   └── test_feature_encoding.py
 ├── monitoring/
-│   └── prometheus.yml      # Prometheus scrape configuration
-├── models/                 # Generated artifacts (model.pkl, scaler.pkl, feature_names.pkl)
-├── mlruns/                 # MLflow local tracking store
-├── Dockerfile.api          # Image for the FastAPI service
-├── Dockerfile.streamlit    # Image for the Streamlit UI
-├── docker-compose.yml      # Full 4-service stack
-├── requirements.api.txt    # API dependencies
-├── requirements.streamlit.txt  # UI dependencies
-├── ruff.toml               # Linter and formatter configuration
-└── .github/
-    └── workflows/
-        └── ci.yml          # GitHub Actions pipeline
+│   ├── prometheus.yml
+│   └── grafana/
+│       ├── dashboards/
+│       │   └── churnguard.json
+│       └── provisioning/
+│           ├── dashboards/
+│           │   └── dashboard.yml
+│           └── datasources/
+│               └── prometheus.yml
+├── models/                    # Generated model artifacts
+├── Dockerfile.api
+├── Dockerfile.streamlit
+├── docker-compose.yml
+├── requirements.api.txt
+├── requirements.streamlit.txt
+├── requirements.train.txt
+├── .dockerignore
+├── .env.example
+├── ruff.toml
+└── .github/workflows/ci.yml   # GitHub Actions pipeline
 ```
 
 ---
@@ -144,7 +158,7 @@ Loaded at training time directly from GitHub — no manual download needed.
 All training logic lives in `src/train.py`. Run it once before starting the API:
 
 ```bash
-python src/train.py
+python -m src.train
 ```
 
 **What happens, step by step:**
@@ -212,10 +226,10 @@ Three separate files are saved intentionally:
 
 ## 6. Step 3 — Experiment tracking with MLflow
 
-MLflow tracks every training run locally inside `mlruns/`.
+MLflow stores every training run locally in the SQLite database `mlflow.db`.
 
 ```bash
-mlflow ui          # open http://localhost:5000 to see run history
+mlflow ui --backend-store-uri sqlite:///mlflow.db          # open http://localhost:5000 to see run history
 ```
 
 Each run records:
@@ -334,7 +348,7 @@ The test suite in `tests/test_api.py` uses FastAPI's `TestClient`, which runs th
 pytest tests/ -v
 ```
 
-**18 tests across 4 classes:**
+**32 automated tests cover:**
 
 | Class | What it covers |
 |-------|---------------|
@@ -367,7 +381,7 @@ CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
 Build and run manually:
 
 ```bash
-python src/train.py                           # generate models/ first
+python -m src.train                           # generate models/ first
 docker build -f Dockerfile.api -t churnguard-api .
 docker run -p 8000:8000 churnguard-api
 ```
@@ -386,21 +400,26 @@ CMD ["streamlit", "run", "src/streamlit_app.py", "--server.port=8501", "--server
 The Streamlit image contains **no model files** — it only talks to the API over HTTP.
 
 ---
-
 ## 11. Step 8 — Monitoring with Prometheus and Grafana
 
 ### 11.1 How metrics flow
 
-```
-FastAPI /metrics ──► Prometheus (scrapes every 15s) ──► Grafana (visualises)
+```text
+FastAPI /metrics ──► Prometheus (scrapes every 15s) ──► Grafana dashboard
 ```
 
-### 11.2 Prometheus configuration (`monitoring/prometheus.yml`)
+The API records:
+
+- Successful and failed prediction requests
+- Customers predicted to churn
+- Prediction latency
+- Standard Python process metrics
+
+### 11.2 Prometheus configuration
+
+Prometheus reads `monitoring/prometheus.yml` and scrapes the API container:
 
 ```yaml
-global:
-  scrape_interval: 15s
-
 scrape_configs:
   - job_name: churnguard-api
     static_configs:
@@ -408,24 +427,48 @@ scrape_configs:
     metrics_path: /metrics
 ```
 
-`api` resolves via Docker's internal DNS when running under Compose.
+Check Prometheus health at [http://localhost:9090/-/healthy](http://localhost:9090/-/healthy).
 
-### 11.3 Setting up a Grafana dashboard
+### 11.3 Grafana provisioning
 
-1. Open `http://localhost:3000` (admin / churnguard)
-2. Add data source → Prometheus → URL: `http://prometheus:9090`
-3. Create a dashboard with these PromQL queries:
+The Prometheus datasource and ChurnGuard dashboard are provisioned automatically from version-controlled files:
 
-```promql
-# Request rate (requests per second)
-rate(churnguard_requests_total[1m])
-
-# 95th percentile latency
-histogram_quantile(0.95, rate(churnguard_request_latency_seconds_bucket[5m]))
-
-# Churn prediction rate
-rate(churnguard_churn_predicted_total[5m])
+```text
+monitoring/grafana/
+├── dashboards/churnguard.json
+└── provisioning/
+    ├── dashboards/dashboard.yml
+    └── datasources/prometheus.yml
 ```
+
+The datasource uses the stable UID `prometheus`, allowing the exported dashboard to work on a fresh Grafana installation.
+
+Create the local environment file before starting the stack:
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and replace the placeholder with a secure local password:
+
+```dotenv
+GRAFANA_ADMIN_PASSWORD=replace-with-a-secure-password
+```
+
+Do not commit `.env`; it is excluded by `.gitignore`.
+
+After starting Docker Compose, sign in at [http://localhost:3000](http://localhost:3000) with username `admin` and the password stored in `.env`. Open the provisioned **ChurnGuard Monitoring** dashboard.
+
+The dashboard contains four panels:
+
+| Panel | PromQL |
+|---|---|
+| Total Prediction Requests | `sum(churnguard_requests_total)` |
+| Customers Predicted to Churn | `churnguard_churn_predicted_total` |
+| Average Prediction Latency | `sum(churnguard_request_latency_seconds_sum) / clamp_min(sum(churnguard_request_latency_seconds_count), 1)` |
+| Failed Prediction Requests | `sum(churnguard_requests_total{status="error"}) or vector(0)` |
+
+The provisioned dashboard is read-only in Grafana because its JSON file is the source of truth.
 
 ---
 
@@ -443,7 +486,7 @@ grafana    (port 3000)  ← reads from prometheus
 ### 12.1 Start everything
 
 ```bash
-python src/train.py       # build model artifacts once (needed by the api image)
+python -m src.train       # build model artifacts once (needed by the api image)
 docker compose up --build
 ```
 
@@ -474,7 +517,7 @@ Streamlit will not start until the API passes its health check, preventing conne
 | API docs | http://localhost:8000/docs | — |
 | Streamlit UI | http://localhost:8501 | — |
 | Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3000 | admin / churnguard |
+| Grafana | http://localhost:3000 | admin / password from `.env` |
 
 ### 12.4 Stop and clean up
 
@@ -500,11 +543,11 @@ push to main
     │
     ├── test (parallel)
     │       pip install dependencies
-    │       python src/train.py          ← train model so artifacts exist for tests
+    │       python -m src.train          ← train model so artifacts exist for tests
     │       pytest tests/ -v
     │
     └── build-and-push  (only on main, requires test to pass)
-            python src/train.py          ← bake fresh artifacts into the image
+            python -m src.train          ← bake fresh artifacts into the image
             docker build Dockerfile.api  ──► ghcr.io/…/churnguard-api:latest
             docker build Dockerfile.streamlit ──► ghcr.io/…/churnguard-streamlit:latest
 ```
@@ -554,24 +597,35 @@ The lint job enforces both **correctness** (`ruff check`) and **formatting** (`r
 ## Quick-start cheat sheet
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.api.txt
-pip install pytest httpx mlflow streamlit plotly requests
+# 1. Create and activate the Python 3.11 environment
+python3.11 -m venv .venv
+source .venv/bin/activate
 
-# 2. Train the model
-python src/train.py
+# 2. Install development dependencies
+python -m pip install --upgrade pip
+python -m pip install -r requirements.train.txt
+python -m pip install -r requirements.streamlit.txt
+python -m pip install pytest httpx ruff
 
-# 3a. Run locally (4 separate terminals)
+# 3. Train the model and create the MLflow database
+python -m src.train
+
+# 4a. Run locally in separate terminals
 uvicorn src.api:app --reload --port 8000
 streamlit run src/streamlit_app.py
-mlflow ui                              # optional — view experiment history
-pytest tests/ -v                       # verify everything works
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+pytest -q
 
-# 3b. Run with Docker Compose (all services, one command)
-docker compose up --build
+# 4b. Or run the complete containerised stack
+cp .env.example .env
+# Replace the placeholder password in .env before continuing
+docker compose up --build -d
+docker compose ps
 
-# 4. Check code quality
-pip install ruff
+# 5. Check code quality
 ruff check src/ tests/
 ruff format --check src/ tests/
+
+# 6. Stop the containers
+docker compose down
 ```

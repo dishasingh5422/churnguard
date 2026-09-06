@@ -5,6 +5,8 @@ WORKDIR /app
 COPY requirements.streamlit.txt .
 RUN pip install --no-cache-dir -r requirements.streamlit.txt
 
+COPY src/__init__.py src/
+COPY src/feature_encoding.py src/
 COPY src/streamlit_app.py src/
 
 EXPOSE 8501

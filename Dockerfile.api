@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 COPY requirements.api.txt .
 RUN pip install --no-cache-dir -r requirements.api.txt
 
+COPY src/__init__.py src/
 COPY src/api.py src/
 COPY models/ models/
 

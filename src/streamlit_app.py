@@ -4,6 +4,15 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+from feature_encoding import (
+    BINARY,
+    CONTRACT,
+    INTERNET_ADDON,
+    INTERNET_SERVICE,
+    MULTIPLE_LINES,
+    PAYMENT,
+)
+
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
 # API_URL = "http://localhost:8000"
@@ -52,28 +61,6 @@ with st.sidebar:
     predict_btn = st.button("Predict churn risk", type="primary", use_container_width=True)
 
 
-def encode(mapping, value):
-    return mapping[value]
-
-
-BINARY = {"No": 0, "Yes": 1}
-MULTI3 = {
-    "No phone service": 0,
-    "No": 0,
-    "Yes": 1,
-    "No internet service": 0,
-    "DSL": 1,
-    "Fiber optic": 2,
-}
-CONTRACT = {"Month-to-month": 0, "One year": 1, "Two year": 2}
-PAYMENT = {
-    "Bank transfer (automatic)": 0,
-    "Credit card (automatic)": 1,
-    "Electronic check": 2,
-    "Mailed check": 3,
-}
-
-
 def build_payload():
     return {
         "gender": 1 if gender == "Male" else 0,
@@ -82,14 +69,14 @@ def build_payload():
         "Dependents": BINARY[dependents],
         "tenure": tenure,
         "PhoneService": BINARY[phone],
-        "MultipleLines": MULTI3[multi_lines],
-        "InternetService": MULTI3[internet],
-        "OnlineSecurity": MULTI3[security],
-        "OnlineBackup": MULTI3[backup],
-        "DeviceProtection": MULTI3[protection],
-        "TechSupport": MULTI3[tech_support],
-        "StreamingTV": MULTI3[streaming_tv],
-        "StreamingMovies": MULTI3[streaming_mov],
+        "MultipleLines": MULTIPLE_LINES[multi_lines],
+        "InternetService": INTERNET_SERVICE[internet],
+        "OnlineSecurity": INTERNET_ADDON[security],
+        "OnlineBackup": INTERNET_ADDON[backup],
+        "DeviceProtection": INTERNET_ADDON[protection],
+        "TechSupport": INTERNET_ADDON[tech_support],
+        "StreamingTV": INTERNET_ADDON[streaming_tv],
+        "StreamingMovies": INTERNET_ADDON[streaming_mov],
         "Contract": CONTRACT[contract],
         "PaperlessBilling": BINARY[paperless],
         "PaymentMethod": PAYMENT[payment],

@@ -1,2 +1,13 @@
 mlruns/
 models/
+
+# Local development files
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local MLflow state
+mlflow.db
+mlartifacts/
+.env
